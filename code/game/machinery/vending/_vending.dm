@@ -24,7 +24,9 @@
 	/// icon_state to flick() when vending
 	var/icon_vend
 
-	/// icon_state to flick() when refusing to vend
+	/// How long the physical icon state lasts, used cut the deny overlay
+	var/deny_time
+
 	var/icon_deny
 
 	/// Power to one-off spend on successfully vending.
@@ -64,6 +66,8 @@
 	var/scan_id = TRUE
 	var/obj/item/material/coin/coin
 
+	var/global/list/screen_overlays
+	var/exclusive_screen = TRUE // Are we not allowed to show the deny and screen states at the same time?
 
 /obj/machinery/vending/Destroy()
 	vendor_wires = null
@@ -81,8 +85,24 @@
 		last_slogan = world.time + rand(0, slogan_delay)
 	if (product_ads)
 		ads_list += splittext(product_ads, ";")
+	add_screen_overlay()
 	build_inventory(populate_parts)
 
+
+/obj/machinery/vending/proc/reset_light()
+	set_light(initial(light_inner_range), initial(light_max_bright), initial(light_color))
+
+/obj/machinery/vending/proc/add_screen_overlay(var/deny = FALSE)
+	if(!LAZYLEN(screen_overlays))
+		LAZYINITLIST(screen_overlays)
+	if(!("[icon_state]-screen" in screen_overlays) || (deny && !("[icon_state]-deny" in screen_overlays)))
+		var/list/states = icon_states(icon)
+		if ("[icon_state]-screen" in states)
+			screen_overlays["[icon_state]-screen"] = make_screen_overlay(icon, "[icon_state]-screen")
+		if ("[icon_state]-deny" in states)
+			screen_overlays["[icon_state]-deny"] = make_screen_overlay(icon, "[icon_state]-deny")
+	add_overlay(screen_overlays["[icon_state]-[deny ? "deny" : "screen"]"])
+	reset_light()
 
 /obj/machinery/vending/Process()
 	if (inoperable())
@@ -105,6 +125,7 @@
 
 /obj/machinery/vending/on_update_icon()
 	overlays.Cut()
+	add_screen_overlay()
 	if (MACHINE_IS_BROKEN(src))
 		icon_state = "[initial(icon_state)]-broken"
 	else if (is_powered())
@@ -377,7 +398,13 @@
 /obj/machinery/vending/proc/vend(datum/stored_items/vending_products/product, mob/user)
 	if (scan_id && !emagged && !allowed(user))
 		to_chat(user, SPAN_WARNING("Access denied."))
-		flick(icon_deny, src)
+		if(exclusive_screen)
+			cut_overlays()
+			addtimer(new Callback(src, .proc/add_screen_overlay), deny_time ? deny_time : 15)
+		add_screen_overlay(deny = TRUE)
+		addtimer(new Callback(src, /atom/.proc/cut_overlay, screen_overlays["[icon_state]-deny"]), deny_time ? deny_time : 15)
+		set_light(initial(light_inner_range), initial(light_max_bright), COLOR_RED_LIGHT)
+		addtimer(new Callback(src, .proc/reset_light), deny_time ? deny_time : 15)
 		return
 	vend_ready = FALSE
 	status_message = "Vending..."
